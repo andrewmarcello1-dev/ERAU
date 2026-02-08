@@ -1,0 +1,168 @@
+clear; close all; clc
+
+%{ =============================================================
+  This code recieves data from three different files based
+  on user input and then cuts and plots the provided data on the
+  time domain.
+%} =============================================================
+  
+
+%% Import Desired Data
+w = 0;
+
+while w ~= 1 && w ~= 2 && w ~= 3
+    w = input('Select Trial (Enter 1, 2, or 3): ');
+    if w ~= 1 && w ~= 2 && w ~= 3
+        fprintf('Please Enter 1, 2, or 3\n')
+    end
+end
+
+proxFile = sprintf('Keyence_ThermalTest_%d.csv', w);
+tempFile = sprintf('Temperature_%d.txt', w);
+camFile  = sprintf('Camera_ThermalTest_%d', w);
+
+data_prox = readtable(proxFile, 'VariableNamingRule','preserve');
+data_pyro = readtable(tempFile, 'VariableNamingRule','preserve');
+data_cam  = readtable(camFile,  'VariableNamingRule','preserve');
+
+%% Proximity sensor
+
+gap_prox = table2array(data_prox(:,3));
+gap_prox_zeroed = 200-(gap_prox-min(gap_prox))*1000;
+t0 = 0;
+Fs = 1000;
+N = length(gap_prox);
+tf = N/Fs;
+t_prox = linspace(t0,tf,N);
+
+%% Camera
+
+t_cam = table2array(data_cam(:,7));
+gap_cam = table2array(data_cam(:,1));
+M = length(gap_cam);
+for n = 1:M
+    if gap_cam(n) == 0
+        ind = n;
+    end
+end
+
+gap_cam = gap_cam(ind+1:end);
+t_cam = t_cam(ind+1:end);
+t_cam_zeroed = t_cam-min(t_cam);
+
+%% Temperature
+
+T = table2array(data_pyro(:,3));
+t_pyro = table2array(data_pyro(:,1));
+L = length(T);
+for n = 1:L
+    if t_pyro(n) >= t_cam(1)
+        ind = n;
+        break
+    end
+end
+t_pyro_zeroed = t_pyro(ind:end)-min(t_pyro(ind:end));
+T = T(ind:end);
+
+%% Normalize Time
+
+[time_end,arr] = min([t_cam_zeroed(end) t_pyro_zeroed(end) t_prox(end)]);
+
+[t_cam_masked, gap_cam_masked]   = mask_until(t_cam_zeroed, gap_cam, time_end);
+[t_pyro_masked, T_masked] = mask_until(t_pyro_zeroed, T, time_end);
+[t_prox_masked, gap_prox_masked] = mask_until(t_prox, gap_prox_zeroed, time_end);
+
+%% Resample gaps onto the pyrometer time base (t_pyro_masked)
+t_common = t_pyro_masked;  % we'll use temperature's time vector
+
+gap_cam_onT  = interp_with_unique(t_cam_masked,  gap_cam_masked,  t_common);
+gap_prox_onT = interp_with_unique(t_prox_masked, gap_prox_masked, t_common);
+
+% Keep only points where both resampled gaps are defined (inside overlap)
+valid = ~isnan(gap_cam_onT) & ~isnan(gap_prox_onT);
+
+%% Analytical Result
+
+T_change = T_masked-min(T_masked);
+R0 = 2.999*25400;
+alp = 12.8*10^-6;
+del_R = 200 - alp*R0*T_change;
+
+%% Errors
+
+cam_error = abs(del_R-gap_cam_onT)./del_R*100;
+prox_error = abs(del_R-gap_prox_onT)./del_R*100;
+relative_error = abs(gap_prox_onT-gap_cam_onT)./gap_prox_onT*100;
+
+%% Plot Results
+figure;
+subplot(3,1,1)
+plot(t_cam_masked/60,gap_cam_masked); hold on
+plot(t_prox_masked/60,gap_prox_masked); hold on
+plot(t_pyro_masked/60,T_masked)
+xlabel('Time (min)','FontSize',20);  % adjust units if different
+ylabel('Gap (\mum)','FontSize',20);        % adjust units if different
+legend('Camera','Proximity','Temperature','Location','best','FontSize',15);
+grid on
+title('Data in Time Domain','FontSize',24)
+xlim([0 20])
+ylim([0 210])
+
+subplot(3,1,2)
+plot(T_masked(valid), gap_cam_onT(valid), '-o'); hold on
+plot(T_masked(valid), gap_prox_onT(valid), '-o'); hold on
+plot(T_masked,del_R)
+xlabel('Temperature (°C)','FontSize',20);  % adjust units if different
+ylabel('Gap (\mum)','FontSize',20);        % adjust units if different
+legend('Camera','Proximity','Analytical','Location','best','FontSize',15);
+grid on
+title('Gap vs Temperature','FontSize',24)
+xlim([0 140])
+ylim([50 210])
+
+subplot(3,1,3)
+plot(T_masked,cam_error,'b-'); hold on
+plot(T_masked,prox_error,'r-'); hold on
+plot(T_masked,relative_error,'k-');
+plot([0 max(T_masked)],[max(cam_error) max(cam_error)],'b--'); hold on
+plot([0 max(T_masked)],[max(prox_error) max(prox_error)],'r--'); hold on
+plot([0 max(T_masked)],[max(relative_error) max(relative_error)],'k--')
+xlabel('Temperature (C)','FontSize',20);  % adjust units if different
+ylabel('Error (%)','FontSize',20);        % adjust units if different
+legend('Camera Error to Analytical','Keyence Error to Analytical','Relative Error Between Methods','Location','best','FontSize',15);
+grid on
+title('Percent Error at Temperature','FontSize',24)
+xlim([0 140])
+ylim([0 35])
+
+ax1 = subplot(3,1,1);
+ax1.FontSize = 15;
+ax1 = subplot(3,1,2);
+ax1.FontSize = 15;
+ax1 = subplot(3,1,3);
+ax1.FontSize = 15;
+
+%% Functions
+function yi = interp_with_unique(x, y, xq)
+    x = x(:); y = y(:); xq = xq(:);                 % column vectors
+    [xu, ia] = unique(x, 'stable');                 % remove duplicate times
+    yu = y(ia);
+    yi = interp1(xu, yu, xq, 'pchip', NaN);         % smooth, no extrapolation
+end
+
+
+function [t_masked, y_masked] = mask_until(t, y, t_end)
+    % returns first contiguous block of data up to t_end
+    idx = find(t <= t_end, 1, 'last');
+    if isempty(idx)
+        t_masked = t([]);           % preserve orientation
+        if isempty(y)
+            y_masked = y;
+        else
+            y_masked = y([],:);     % safe for vector or matrix y
+        end
+    else
+        t_masked = t(1:idx);
+        y_masked = y(1:idx,:,:);    % supports multi-dim y
+    end
+end

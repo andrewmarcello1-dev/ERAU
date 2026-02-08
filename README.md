@@ -1,5 +1,4 @@
-# ERAU
-Codes Written for ERAU Research/Coursework
+# My Portfolio
 
 Topics:
 - Data Post-Processing and Analysis

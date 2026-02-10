@@ -9,7 +9,7 @@ f = @(t,x) [ 2*x(1) - x(1)*x(2);      % x1dot
 
 tspan = [0 10];
 
-% Choose a grid of initial conditions (edit as desired)
+% Choose a grid of initial conditions
 x1_0 = linspace(-3,3,14);
 x2_0 = linspace(-6,6,26);
 
@@ -37,3 +37,4 @@ v = 2*x1g.^2 - x2g;
 quiver(x1g,x2g,u,v,0.7);
 
 axis([-3 3 -6 6]);
+
